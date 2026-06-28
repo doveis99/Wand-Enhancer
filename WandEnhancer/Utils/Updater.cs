@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
@@ -23,6 +24,9 @@ namespace WandEnhancer.Utils
         public class AssetsType
         {
             public string Name { get; set; }
+
+            [JsonProperty("url")]
+            public string ApiUrl { get; set; }
 
             [JsonProperty("browser_download_url")]
             public string Url { get; set; }
@@ -46,16 +50,28 @@ namespace WandEnhancer.Utils
         private GitHubRelease _release = null;
         private UpdateReleaseInfo _updateInfo = null;
         private string _fullChangelog = null;
+        private const string TokenEnvironmentVariable = "WAND_ENHANCER_GITHUB_TOKEN";
         private static readonly HttpClient _httpClient = new HttpClient()
         {
             DefaultRequestHeaders =
             {
-                { "User-Agent", "GitHub-Updater" }
+                { "User-Agent", "WandEnhancer-Updater" },
+                { "X-GitHub-Api-Version", "2022-11-28" }
             }
         };
 
-        private static readonly string ApiUrl = $"https://api.github.com/repos/{Constants.Owner}/{Constants.RepoName}/releases/latest";
-        private static readonly string ReleasesApiUrl = $"https://api.github.com/repos/{Constants.Owner}/{Constants.RepoName}/releases?per_page=20";
+        private static readonly string ApiUrl = $"https://api.github.com/repos/{Constants.UpdateOwner}/{Constants.UpdateRepoName}/releases/latest";
+        private static readonly string ReleasesApiUrl = $"https://api.github.com/repos/{Constants.UpdateOwner}/{Constants.UpdateRepoName}/releases?per_page=20";
+
+        static Updater()
+        {
+            _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+            var token = Environment.GetEnvironmentVariable(TokenEnvironmentVariable);
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
+            }
+        }
 
         public async Task<bool> CheckForUpdates()
         {
@@ -133,7 +149,7 @@ namespace WandEnhancer.Utils
 
             var downloadPath = Path.Combine(Path.GetTempPath(), asset.Name);
 
-            using(var response = await _httpClient.GetAsync(asset.Url))
+            using(var response = await DownloadAssetAsync(asset))
             using(var fileStream = File.Create(downloadPath))
             {
                 response.EnsureSuccessStatusCode();
@@ -141,6 +157,19 @@ namespace WandEnhancer.Utils
             }
 
             ApplyUpdate(downloadPath);
+        }
+
+        private static async Task<HttpResponseMessage> DownloadAssetAsync(GitHubRelease.AssetsType asset)
+        {
+            var downloadUrl = string.IsNullOrWhiteSpace(asset.ApiUrl) ? asset.Url : asset.ApiUrl;
+            var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+            if (!string.IsNullOrWhiteSpace(asset.ApiUrl))
+            {
+                request.Headers.Accept.Clear();
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream"));
+            }
+
+            return await _httpClient.SendAsync(request);
         }
 
         private static void ApplyUpdate(string filePath)

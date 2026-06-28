@@ -16,6 +16,18 @@ function Read-RepoFile {
     return Get-Content -LiteralPath $path -Raw
 }
 
+function Assert-Missing {
+    param(
+        [string]$RelativePath,
+        [string]$Message
+    )
+
+    $path = Join-Path $repoRoot $RelativePath
+    if (Test-Path -LiteralPath $path) {
+        throw $Message
+    }
+}
+
 function Assert-Contains {
     param(
         [string]$Content,
@@ -29,7 +41,6 @@ function Assert-Contains {
 }
 
 $buildWorkflow = Read-RepoFile '.github\workflows\build.yml'
-$releaseWorkflow = Read-RepoFile '.github\workflows\release.yml'
 $syncWorkflow = Read-RepoFile '.github\workflows\sync-upstream.yml'
 $pnpmWorkspace = Read-RepoFile 'web-panel\pnpm-workspace.yaml'
 $constants = Read-RepoFile 'WandEnhancer\Constants.cs'
@@ -44,16 +55,16 @@ Assert-Contains $buildWorkflow '(?ms)pnpm/action-setup@v4\s+with:\s+version:\s+1
 
 Assert-Contains $syncWorkflow 'k1tbyte/Wand-Enhancer\.git' 'sync-upstream.yml must fetch from the original upstream repository.'
 Assert-Contains $syncWorkflow 'gh\s+workflow\s+run\s+build\.yml' 'sync-upstream.yml must dispatch the build workflow after an automated sync.'
-Assert-Contains $syncWorkflow 'gh\s+workflow\s+run\s+release\.yml' 'sync-upstream.yml must dispatch release publishing for synced tags.'
+if ($syncWorkflow -match 'release\.yml|softprops/action-gh-release') {
+    throw 'sync-upstream.yml must not publish public GitHub releases.'
+}
 
-Assert-Contains $releaseWorkflow 'workflow_dispatch:' 'release.yml must support explicit dispatch for synced tags.'
-Assert-Contains $releaseWorkflow 'release_tag' 'release.yml must accept a release_tag input.'
-Assert-Contains $releaseWorkflow "github\.repository == 'doveis99/Wand-Enhancer'" 'release.yml must be enabled for the fork repository.'
-Assert-Contains $releaseWorkflow 'WandEnhancer/bin/Release/WandEnhancer\.exe' 'release.yml must publish the executable asset for the updater.'
-Assert-Contains $releaseWorkflow '(?ms)pnpm/action-setup@v4\s+with:\s+version:\s+11' 'release.yml must use pnpm 11 to honor allowBuilds.'
+Assert-Missing '.github\workflows\release.yml' 'The public fork must not contain a release workflow that can publish public executable assets.'
 Assert-Contains $pnpmWorkspace '(?ms)allowBuilds:\s+esbuild:\s+true' 'pnpm-workspace.yaml must allow esbuild install scripts for reproducible builds.'
 
 Assert-Contains $constants 'public const string Owner = "doveis99";' 'Constants.Owner must point updater links at the fork.'
+Assert-Contains $constants 'public const string UpdateOwner = "doveis99";' 'Constants.UpdateOwner must point private updater checks at the release owner.'
+Assert-Contains $constants 'public const string UpdateRepoName = "Wand-Enhancer-Releases";' 'Constants.UpdateRepoName must point updater checks at the private release repository.'
 Assert-Contains $project 'System\.Net\.Http' 'WandEnhancer.csproj must reference System.Net.Http for the updater.'
 Assert-Contains $project 'Utils\\Updater\.cs' 'WandEnhancer.csproj must compile the updater.'
 Assert-Contains $project 'View\\Popups\\UpdatePopup\.xaml\.cs' 'WandEnhancer.csproj must compile the update popup code-behind.'
@@ -61,6 +72,10 @@ Assert-Contains $project 'View\\Popups\\UpdatePopup\.xaml' 'WandEnhancer.csproj 
 Assert-Contains $mainWindow 'Command="\{Binding UpdateCommand\}"' 'MainWindow.xaml must expose the update command.'
 Assert-Contains $mainWindowVm 'UpdateCommand\s*=\s*new RelayCommand\(OnUpdate\);' 'MainWindowVm must initialize UpdateCommand.'
 Assert-Contains $updater 'releases/latest' 'Updater must query GitHub releases.'
-Assert-Contains $updater 'Assets\.FirstOrDefault\(o => o\.Name\.EndsWith\("\.exe"\)\)' 'Updater must download an executable release asset.'
+Assert-Contains $updater 'WAND_ENHANCER_GITHUB_TOKEN' 'Updater must read a local GitHub token instead of embedding one.'
+Assert-Contains $updater 'AuthenticationHeaderValue\("Bearer"' 'Updater must authenticate to the private release repository.'
+Assert-Contains $updater 'Constants\.UpdateOwner' 'Updater must query the private release repository owner.'
+Assert-Contains $updater 'Constants\.UpdateRepoName' 'Updater must query the private release repository name.'
+Assert-Contains $updater 'application/octet-stream' 'Updater must download private release assets through the GitHub asset API.'
 
 Write-Host 'Fork automation and updater wiring validated.'

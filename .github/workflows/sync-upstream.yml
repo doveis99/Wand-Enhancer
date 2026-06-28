@@ -57,11 +57,6 @@ jobs:
           echo "branch_changed=$branch_changed" >> "$GITHUB_OUTPUT"
           echo "tags_changed=$tags_changed" >> "$GITHUB_OUTPUT"
           echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
-          {
-            echo "new_tags<<EOF"
-            cat "$RUNNER_TEMP/new-tags.txt"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Dispatch build for synced branch
         if: steps.sync.outputs.branch_changed == 'true'
@@ -69,32 +64,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run build.yml --ref master
 
-      - name: Dispatch releases for synced tags
+      - name: Report synced tags
         if: steps.sync.outputs.tags_changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NEW_TAGS: ${{ steps.sync.outputs.new_tags }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          while IFS= read -r tag; do
-            [ -z "$tag" ] && continue
-            gh workflow run release.yml --ref master -f release_tag="$tag"
-          done <<< "$NEW_TAGS"
-
-      - name: Dispatch latest release if missing
-        if: steps.sync.outputs.latest_tag != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          LATEST_TAG: ${{ steps.sync.outputs.latest_tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if gh release view "$LATEST_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $LATEST_TAG already exists."
-            exit 0
-          fi
-
-          gh workflow run release.yml --ref master -f release_tag="$LATEST_TAG"
+        run: echo "Synced upstream tags. Private release publishing is handled by doveis99/Wand-Enhancer-Releases."
