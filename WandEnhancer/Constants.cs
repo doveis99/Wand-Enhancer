@@ -7,7 +7,7 @@ namespace WandEnhancer
     public static class Constants
     {
         public const string RepoName = "Wand-Enhancer";
-        public const string Owner = "k1tbyte";
+        public const string Owner = "doveis99";
         /*public const string PatchRegistryName = "patchRegistry.json";*/
         public static readonly string RepositoryUrl = $"https://github.com/{Owner}/{RepoName}";
         public static readonly Version Version;

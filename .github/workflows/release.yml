@@ -4,25 +4,32 @@ on:
   push:
     tags:
       - '*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Tag/version to publish from the fork master build
+        required: true
+        type: string
 
 jobs:
   publish-release:
-    if: github.repository == 'k1tbyte/Wand-Enhancer'
+    if: github.repository == 'doveis99/Wand-Enhancer'
     runs-on: windows-latest
     permissions:
       contents: write
 
     env:
-      RELEASE_VERSION: ${{ github.ref_name }}
+      RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: master
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
@@ -45,8 +52,10 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_VERSION }}
+          tag_name: ${{ env.RELEASE_VERSION }}
           body_path: release-notes.md
-          files: CHANGELOG.md
+          files: |
+            WandEnhancer/bin/Release/WandEnhancer.exe
+            CHANGELOG.md
           fail_on_unmatched_files: true

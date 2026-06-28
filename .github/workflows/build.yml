@@ -1,6 +1,8 @@
 name: Build executable
 
 on:
+  push:
+    branches: [ "master" ]
   workflow_dispatch:
 
 jobs:
@@ -14,13 +16,18 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web-panel/pnpm-lock.yaml
+
+      - name: Validate fork automation
+        if: github.repository == 'doveis99/Wand-Enhancer'
+        shell: pwsh
+        run: ./scripts/validate-fork-automation.ps1
 
       - name: Build unsigned executable
         shell: pwsh

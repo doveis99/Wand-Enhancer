@@ -1,0 +1,100 @@
+name: Sync upstream and build
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    if: github.repository == 'doveis99/Wand-Enhancer'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream changes
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout master
+          git tag -l | sort > "$RUNNER_TEMP/origin-tags.txt"
+
+          git remote add upstream https://github.com/k1tbyte/Wand-Enhancer.git
+          git fetch upstream master --tags
+
+          git tag -l | sort > "$RUNNER_TEMP/all-tags.txt"
+          comm -13 "$RUNNER_TEMP/origin-tags.txt" "$RUNNER_TEMP/all-tags.txt" > "$RUNNER_TEMP/new-tags.txt"
+
+          branch_changed=false
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "Fork master already contains upstream/master."
+          else
+            git merge --no-edit upstream/master
+            git push origin HEAD:master
+            branch_changed=true
+          fi
+
+          tags_changed=false
+          if [ -s "$RUNNER_TEMP/new-tags.txt" ]; then
+            git push origin --tags
+            tags_changed=true
+          fi
+
+          latest_tag="$(git tag --sort=-v:refname | head -n 1)"
+
+          echo "branch_changed=$branch_changed" >> "$GITHUB_OUTPUT"
+          echo "tags_changed=$tags_changed" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "new_tags<<EOF"
+            cat "$RUNNER_TEMP/new-tags.txt"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch build for synced branch
+        if: steps.sync.outputs.branch_changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build.yml --ref master
+
+      - name: Dispatch releases for synced tags
+        if: steps.sync.outputs.tags_changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_TAGS: ${{ steps.sync.outputs.new_tags }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            gh workflow run release.yml --ref master -f release_tag="$tag"
+          done <<< "$NEW_TAGS"
+
+      - name: Dispatch latest release if missing
+        if: steps.sync.outputs.latest_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST_TAG: ${{ steps.sync.outputs.latest_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$LATEST_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $LATEST_TAG already exists."
+            exit 0
+          fi
+
+          gh workflow run release.yml --ref master -f release_tag="$LATEST_TAG"
