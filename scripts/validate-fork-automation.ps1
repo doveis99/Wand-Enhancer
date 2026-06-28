@@ -41,6 +41,7 @@ function Assert-Contains {
 }
 
 $buildWorkflow = Read-RepoFile '.github\workflows\build.yml'
+$mirrorWorkflow = Read-RepoFile '.github\workflows\mirror.yml'
 $syncWorkflow = Read-RepoFile '.github\workflows\sync-upstream.yml'
 $pnpmWorkspace = Read-RepoFile 'web-panel\pnpm-workspace.yaml'
 $constants = Read-RepoFile 'WandEnhancer\Constants.cs'
@@ -52,6 +53,8 @@ $updater = Read-RepoFile 'WandEnhancer\Utils\Updater.cs'
 Assert-Contains $buildWorkflow '(?ms)on:\s+.*push:\s+.*branches:\s*\[\s*"?master"?' 'build.yml must run automatically on pushes to master.'
 Assert-Contains $buildWorkflow 'workflow_dispatch:' 'build.yml must keep manual dispatch.'
 Assert-Contains $buildWorkflow '(?ms)pnpm/action-setup@v4\s+with:\s+version:\s+11' 'build.yml must use pnpm 11 to honor allowBuilds.'
+
+Assert-Contains $mirrorWorkflow "github\.repository == 'k1tbyte/Wand-Enhancer'" 'mirror.yml must not try to mirror from this fork without the upstream GitLab secret.'
 
 Assert-Contains $syncWorkflow 'k1tbyte/Wand-Enhancer\.git' 'sync-upstream.yml must fetch from the original upstream repository.'
 Assert-Contains $syncWorkflow 'gh\s+workflow\s+run\s+build\.yml' 'sync-upstream.yml must dispatch the build workflow after an automated sync.'
