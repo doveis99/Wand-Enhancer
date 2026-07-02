@@ -29,13 +29,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git checkout master
-          git tag -l | sort > "$RUNNER_TEMP/origin-tags.txt"
 
           git remote add upstream https://github.com/k1tbyte/Wand-Enhancer.git
-          git fetch upstream master --tags
-
-          git tag -l | sort > "$RUNNER_TEMP/all-tags.txt"
-          comm -13 "$RUNNER_TEMP/origin-tags.txt" "$RUNNER_TEMP/all-tags.txt" > "$RUNNER_TEMP/new-tags.txt"
+          git fetch upstream master
 
           branch_changed=false
           if git merge-base --is-ancestor upstream/master HEAD; then
@@ -46,24 +42,10 @@ jobs:
             branch_changed=true
           fi
 
-          tags_changed=false
-          if [ -s "$RUNNER_TEMP/new-tags.txt" ]; then
-            git push origin --tags
-            tags_changed=true
-          fi
-
-          latest_tag="$(git tag --sort=-v:refname | head -n 1)"
-
           echo "branch_changed=$branch_changed" >> "$GITHUB_OUTPUT"
-          echo "tags_changed=$tags_changed" >> "$GITHUB_OUTPUT"
-          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch build for synced branch
         if: steps.sync.outputs.branch_changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run build.yml --ref master
-
-      - name: Report synced tags
-        if: steps.sync.outputs.tags_changed == 'true'
-        run: echo "Synced upstream tags. Private release publishing is handled by doveis99/Wand-Enhancer-Releases."
