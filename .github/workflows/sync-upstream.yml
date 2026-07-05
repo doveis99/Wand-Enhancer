@@ -37,7 +37,29 @@ jobs:
           if git merge-base --is-ancestor upstream/master HEAD; then
             echo "Fork master already contains upstream/master."
           else
-            git merge --no-edit upstream/master
+            if ! git merge --no-edit upstream/master; then
+              # Resolve modify/delete conflicts for files the fork intentionally removes
+              conflict_files=$(git diff --name-only --diff-filter=U)
+              resolved=true
+              fork_removed_pattern='^\.github/workflows/release\.'
+              while IFS= read -r file; do
+                [ -z "$file" ] && continue
+                if echo "$file" | grep -qE "$fork_removed_pattern"; then
+                  git rm --force "$file"
+                  echo "Resolved conflict: removed $file (fork policy)."
+                else
+                  echo "::error::Unhandled merge conflict in $file"
+                  resolved=false
+                fi
+              done < <(echo "$conflict_files")
+
+              if [ "$resolved" = false ]; then
+                echo "::error::Merge conflicts could not be resolved automatically."
+                exit 1
+              fi
+
+              git commit --no-edit
+            fi
             git push origin HEAD:master
             branch_changed=true
           fi
