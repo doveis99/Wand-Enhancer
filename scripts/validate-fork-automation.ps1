@@ -61,7 +61,10 @@ Assert-Contains $syncWorkflow 'gh\s+workflow\s+run\s+build\.yml' 'sync-upstream.
 if ($syncWorkflow -match 'git\s+push\s+origin\s+--tags') {
     throw 'sync-upstream.yml must not push upstream tags with GITHUB_TOKEN because workflow-changing historical tags are rejected.'
 }
-if ($syncWorkflow -match 'release\.yml|softprops/action-gh-release') {
+Assert-Contains $syncWorkflow 'git\s+diff\s+--name-only\s+--diff-filter=U' 'sync-upstream.yml must inspect merge conflicts before resolving fork-policy conflicts.'
+Assert-Contains $syncWorkflow '\.github/workflows/release\.yml' 'sync-upstream.yml must resolve upstream release workflow conflicts by keeping the fork private-only policy.'
+Assert-Contains $syncWorkflow 'git\s+rm\s+-f\s+"\$allowed_conflict"' 'sync-upstream.yml must delete the upstream public release workflow when it is the only merge conflict.'
+if ($syncWorkflow -match 'softprops/action-gh-release|gh\s+release\s+(create|upload|edit)') {
     throw 'sync-upstream.yml must not publish public GitHub releases.'
 }
 

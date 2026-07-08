@@ -37,7 +37,26 @@ jobs:
           if git merge-base --is-ancestor upstream/master HEAD; then
             echo "Fork master already contains upstream/master."
           else
-            git merge --no-edit upstream/master
+            git merge --no-edit upstream/master || {
+              merge_status=$?
+              conflicts="$(git diff --name-only --diff-filter=U)"
+              allowed_conflict=".github/workflows/release.yml"
+              unexpected_conflicts="$(printf '%s\n' "$conflicts" | grep -v -x "$allowed_conflict" || true)"
+
+              if [ -n "$unexpected_conflicts" ]; then
+                echo "Unexpected merge conflicts:"
+                printf '%s\n' "$unexpected_conflicts"
+                exit "$merge_status"
+              fi
+
+              if printf '%s\n' "$conflicts" | grep -q -x "$allowed_conflict"; then
+                echo "Keeping fork-only release policy; removing upstream public release workflow."
+                git rm -f "$allowed_conflict"
+                git commit --no-edit
+              else
+                exit "$merge_status"
+              fi
+            }
             git push origin HEAD:master
             branch_changed=true
           fi
