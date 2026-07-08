@@ -52,7 +52,7 @@ $updater = Read-RepoFile 'WandEnhancer\Utils\Updater.cs'
 
 Assert-Contains $buildWorkflow '(?ms)on:\s+.*push:\s+.*branches:\s*\[\s*"?master"?' 'build.yml must run automatically on pushes to master.'
 Assert-Contains $buildWorkflow 'workflow_dispatch:' 'build.yml must keep manual dispatch.'
-Assert-Contains $buildWorkflow '(?ms)pnpm/action-setup@v4\s+with:\s+version:\s+11' 'build.yml must use pnpm 11 to honor allowBuilds.'
+Assert-Contains $buildWorkflow '(?ms)pnpm/action-setup@v\d+\s+with:\s+version:\s+11' 'build.yml must use pnpm 11 to honor allowBuilds.'
 
 Assert-Contains $mirrorWorkflow "github\.repository == 'k1tbyte/Wand-Enhancer'" 'mirror.yml must not try to mirror from this fork without the upstream GitLab secret.'
 
