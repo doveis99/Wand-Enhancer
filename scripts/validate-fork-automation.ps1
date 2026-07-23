@@ -43,6 +43,7 @@ function Assert-Contains {
 $buildWorkflow = Read-RepoFile '.github\workflows\build.yml'
 $mirrorWorkflow = Read-RepoFile '.github\workflows\mirror.yml'
 $syncWorkflow = Read-RepoFile '.github\workflows\sync-upstream.yml'
+$webPanelPackage = Read-RepoFile 'web-panel\package.json'
 $pnpmWorkspace = Read-RepoFile 'web-panel\pnpm-workspace.yaml'
 $constants = Read-RepoFile 'WandEnhancer\Constants.cs'
 $project = Read-RepoFile 'WandEnhancer\WandEnhancer.csproj'
@@ -52,7 +53,8 @@ $updater = Read-RepoFile 'WandEnhancer\Utils\Updater.cs'
 
 Assert-Contains $buildWorkflow '(?ms)on:\s+.*push:\s+.*branches:\s*\[\s*"?master"?' 'build.yml must run automatically on pushes to master.'
 Assert-Contains $buildWorkflow 'workflow_dispatch:' 'build.yml must keep manual dispatch.'
-Assert-Contains $buildWorkflow '(?ms)pnpm/action-setup@v\d+\s+with:\s+version:\s+11' 'build.yml must use pnpm 11 to honor allowBuilds.'
+Assert-Contains $buildWorkflow '(?ms)pnpm/action-setup@v\d+\s+with:\s+version:\s+10\.17\.0' 'build.yml must use the pnpm version pinned by the web panel.'
+Assert-Contains $webPanelPackage '"packageManager"\s*:\s*"pnpm@10\.17\.0"' 'web-panel/package.json must pin the same pnpm version as build.yml.'
 
 Assert-Contains $mirrorWorkflow "github\.repository == 'k1tbyte/Wand-Enhancer'" 'mirror.yml must not try to mirror from this fork without the upstream GitLab secret.'
 
@@ -69,7 +71,7 @@ if ($syncWorkflow -match 'softprops/action-gh-release|gh\s+release\s+(create|upl
 }
 
 Assert-Missing '.github\workflows\release.yml' 'The public fork must not contain a release workflow that can publish public executable assets.'
-Assert-Contains $pnpmWorkspace '(?ms)allowBuilds:\s+esbuild:\s+true' 'pnpm-workspace.yaml must allow esbuild install scripts for reproducible builds.'
+Assert-Contains $pnpmWorkspace '(?ms)onlyBuiltDependencies:\s+-\s+esbuild' 'pnpm-workspace.yaml must allow the esbuild install script under pnpm 10.'
 
 Assert-Contains $constants 'public const string Owner = "doveis99";' 'Constants.Owner must point updater links at the fork.'
 Assert-Contains $constants 'public const string UpdateOwner = "doveis99";' 'Constants.UpdateOwner must point private updater checks at the release owner.'
