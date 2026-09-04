@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using WandEnhancer.View.MainWindow;
 
 namespace WandEnhancer.Core
@@ -20,6 +21,7 @@ namespace WandEnhancer.Core
     internal static class FuseLauncher
     {
         private const int AsarIntegrityExitCode = -36861;
+        private const int ClearAttemptCount = 20;
 
         /// <returns>False when the session ended badly enough to be worth showing the user.</returns>
         public static bool Launch(string exePath, string args, Action<string, ELogType> log = null)
@@ -154,21 +156,50 @@ namespace WandEnhancer.Core
 
                     // The main process is announced here too, having been patched while it was
                     // still suspended, and a game started from Wand joins the job like any child.
-                    if (message != JOB_OBJECT_MSG_NEW_PROCESS || processId == mainProcessId ||
-                        !IsImage(processId, exePath))
+                    if (message != JOB_OBJECT_MSG_NEW_PROCESS || processId == mainProcessId)
                     {
+                        continue;
+                    }
+
+                    // Identify first with query-only access: a game started from Wand belongs to
+                    // the job too and must never be opened with memory-write/suspend rights.
+                    if (!IsImage(processId, exePath))
+                    {
+                        continue;
+                    }
+
+                    IntPtr process = OpenProcess(ProcessAccess, false, processId);
+                    if (process == IntPtr.Zero)
+                    {
+                        missed++;
+                        log?.Invoke($"Fuse not cleared in pid {processId}; it may exit with {AsarIntegrityExitCode}.",
+                            ELogType.Warn);
                         continue;
                     }
 
                     // The handle is kept open: it is what makes the exit code readable later, and
                     // it also stops Windows handing the pid to someone else in the meantime.
-                    IntPtr process = OpenProcess(ProcessAccess, false, processId);
-                    if (process != IntPtr.Zero)
+                    tracked[processId] = process;
+
+                    // Job notifications and the new process run concurrently. On a busy machine
+                    // the child can otherwise open app.asar while ClearIn is still reading its
+                    // PEB. Suspend it for this very small critical section and retry transient
+                    // early-start failures before allowing Electron to continue.
+                    bool suspended = NtSuspendProcess(process) == 0;
+                    bool fuseCleared;
+                    try
                     {
-                        tracked[processId] = process;
+                        fuseCleared = TryClearFuse(process, stateRva);
+                    }
+                    finally
+                    {
+                        if (suspended)
+                        {
+                            NtResumeProcess(process);
+                        }
                     }
 
-                    if (process != IntPtr.Zero && ElectronFuse.ClearIn(process, stateRva))
+                    if (fuseCleared)
                     {
                         cleared++;
                         log?.Invoke($"pid {processId} started - fuse cleared.", ELogType.Info);
@@ -191,6 +222,24 @@ namespace WandEnhancer.Core
 
             log?.Invoke($"Wand closed: fuse cleared in {cleared} processes" + (missed == 0 ? "." : $", {missed} missed."),
                 missed == 0 ? ELogType.Info : ELogType.Warn);
+        }
+
+        private static bool TryClearFuse(IntPtr process, long stateRva)
+        {
+            for (int attempt = 0; attempt < ClearAttemptCount; attempt++)
+            {
+                if (ElectronFuse.ClearIn(process, stateRva))
+                {
+                    return true;
+                }
+
+                // ClearIn normally succeeds immediately. Yielding here only covers the brief
+                // interval where Windows has announced the process but has not made all of its
+                // image metadata readable yet.
+                Thread.Yield();
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -258,7 +307,7 @@ namespace WandEnhancer.Core
         #region P/Invoke
 
         private const uint CREATE_SUSPENDED = 0x4;
-        private const uint ProcessAccess = 0x0008 | 0x0010 | 0x0020 | 0x0400;
+        private const uint ProcessAccess = 0x0008 | 0x0010 | 0x0020 | 0x0400 | 0x0800;
         private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
         private const int MaxPathLength = 260;
         private const int JobObjectAssociateCompletionPortInformation = 7;
@@ -334,6 +383,12 @@ namespace WandEnhancer.Core
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool GetExitCodeProcess(IntPtr hProcess, out int lpExitCode);
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtSuspendProcess(IntPtr processHandle);
+
+        [DllImport("ntdll.dll")]
+        private static extern int NtResumeProcess(IntPtr processHandle);
 
         [DllImport("kernel32.dll")]
         private static extern bool CloseHandle(IntPtr hObject);
