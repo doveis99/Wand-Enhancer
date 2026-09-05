@@ -51,7 +51,12 @@ namespace WandEnhancer.Core
         /// </summary>
         public static bool ClearIn(IntPtr process, long stateRva)
         {
-            IntPtr imageBase = GetImageBase(process);
+            return ClearIn(process, stateRva, out _);
+        }
+
+        public static bool ClearIn(IntPtr process, long stateRva, out string failure)
+        {
+            IntPtr imageBase = GetImageBase(process, out failure);
             if (imageBase == IntPtr.Zero)
             {
                 return false;
@@ -62,6 +67,7 @@ namespace WandEnhancer.Core
 
             if (!ReadProcessMemory(process, start, block, block.Length, out int read) || read != block.Length)
             {
+                failure = $"ReadProcessMemory(fuse), win32 error {Marshal.GetLastWin32Error()}, {read}/{block.Length} bytes";
                 return false;
             }
 
@@ -72,6 +78,7 @@ namespace WandEnhancer.Core
                 block[SentinelLength] != SupportedWireVersion ||
                 block[SentinelLength + 1] < MinFuseCount)
             {
+                failure = "fuse wire does not match the executable";
                 return false;
             }
 
@@ -83,12 +90,15 @@ namespace WandEnhancer.Core
             var target = new IntPtr(imageBase.ToInt64() + stateRva);
             if (!VirtualProtectEx(process, target, (UIntPtr)1, PAGE_READWRITE, out uint previous))
             {
+                failure = $"VirtualProtectEx, win32 error {Marshal.GetLastWin32Error()}";
                 return false;
             }
 
-            bool written = WriteProcessMemory(process, target, new[] { StateRemoved }, 1, out _);
+            bool written = WriteProcessMemory(process, target, new[] { StateRemoved }, 1, out int bytesWritten);
+            if (!written || bytesWritten != 1)
+                failure = $"WriteProcessMemory, win32 error {Marshal.GetLastWin32Error()}, {bytesWritten}/1 bytes";
             VirtualProtectEx(process, target, (UIntPtr)1, previous, out _);
-            return written;
+            return written && bytesWritten == 1;
         }
 
         /// <summary>
@@ -96,20 +106,30 @@ namespace WandEnhancer.Core
         /// created - or one still suspended, which is where the main process is patched - has no
         /// module list yet, but the kernel fills in the image base before the first instruction.
         /// </summary>
-        private static IntPtr GetImageBase(IntPtr process)
+        private static IntPtr GetImageBase(IntPtr process, out string failure)
         {
+            failure = null;
             var info = new PROCESS_BASIC_INFORMATION();
-            if (NtQueryInformationProcess(process, ProcessBasicInformation, ref info,
-                    Marshal.SizeOf(info), out _) != 0 || info.PebBaseAddress == IntPtr.Zero)
+            int status = NtQueryInformationProcess(process, ProcessBasicInformation, ref info,
+                Marshal.SizeOf(info), out _);
+            if (status != 0 || info.PebBaseAddress == IntPtr.Zero)
             {
+                failure = $"NtQueryInformationProcess, NTSTATUS 0x{status:X8}, PEB 0x{info.PebBaseAddress.ToInt64():X}";
                 return IntPtr.Zero;
             }
 
             var buffer = new byte[IntPtr.Size];
             var address = new IntPtr(info.PebBaseAddress.ToInt64() + PebImageBaseOffset);
-            return ReadProcessMemory(process, address, buffer, buffer.Length, out int read) && read == buffer.Length
-                ? new IntPtr(BitConverter.ToInt64(buffer, 0))
-                : IntPtr.Zero;
+            if (!ReadProcessMemory(process, address, buffer, buffer.Length, out int read) || read != buffer.Length)
+            {
+                failure = $"ReadProcessMemory(PEB), win32 error {Marshal.GetLastWin32Error()}, {read}/{buffer.Length} bytes";
+                return IntPtr.Zero;
+            }
+
+            var imageBase = new IntPtr(BitConverter.ToInt64(buffer, 0));
+            if (imageBase == IntPtr.Zero)
+                failure = "PEB image base is not ready";
+            return imageBase;
         }
 
         private static long FindStateOffset(Stream stream)

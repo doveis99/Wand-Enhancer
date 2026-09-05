@@ -56,10 +56,10 @@ namespace WandEnhancer.Core
                     return false;
                 }
 
-                bool mainCleared = ElectronFuse.ClearIn(info.hProcess, stateRva);
+                bool mainCleared = ElectronFuse.ClearIn(info.hProcess, stateRva, out string mainFailure);
                 log?.Invoke(mainCleared
                         ? $"pid {info.dwProcessId} started - fuse cleared."
-                        : $"Fuse not cleared in pid {info.dwProcessId}; it may exit with {AsarIntegrityExitCode}.",
+                        : $"Fuse not cleared in pid {info.dwProcessId}: {mainFailure}; it may exit with {AsarIntegrityExitCode}.",
                     mainCleared ? ELogType.Info : ELogType.Warn);
 
                 if (!TryTrackChildren(info.hProcess, out job, out port))
@@ -172,7 +172,7 @@ namespace WandEnhancer.Core
                     if (process == IntPtr.Zero)
                     {
                         missed++;
-                        log?.Invoke($"Fuse not cleared in pid {processId}; it may exit with {AsarIntegrityExitCode}.",
+                        log?.Invoke($"Fuse not cleared in pid {processId}: OpenProcess, win32 error {Marshal.GetLastWin32Error()}; it may exit with {AsarIntegrityExitCode}.",
                             ELogType.Warn);
                         continue;
                     }
@@ -187,9 +187,10 @@ namespace WandEnhancer.Core
                     // early-start failures before allowing Electron to continue.
                     bool suspended = NtSuspendProcess(process) == 0;
                     bool fuseCleared;
+                    string failure;
                     try
                     {
-                        fuseCleared = TryClearFuse(process, stateRva);
+                        fuseCleared = TryClearFuse(process, processId, stateRva, out failure);
                     }
                     finally
                     {
@@ -207,7 +208,7 @@ namespace WandEnhancer.Core
                     else
                     {
                         missed++;
-                        log?.Invoke($"Fuse not cleared in pid {processId}; it may exit with {AsarIntegrityExitCode}.",
+                        log?.Invoke($"Fuse not cleared in pid {processId}: {failure}; it may exit with {AsarIntegrityExitCode}.",
                             ELogType.Warn);
                     }
                 }
@@ -224,19 +225,34 @@ namespace WandEnhancer.Core
                 missed == 0 ? ELogType.Info : ELogType.Warn);
         }
 
-        private static bool TryClearFuse(IntPtr process, long stateRva)
+        private static bool TryClearFuse(IntPtr process, int processId, long stateRva, out string failure)
         {
-            for (int attempt = 0; attempt < ClearAttemptCount; attempt++)
+            if (ElectronFuse.ClearIn(process, stateRva, out failure))
+                return true;
+
+            for (int attempt = 1; attempt < ClearAttemptCount; attempt++)
             {
-                if (ElectronFuse.ClearIn(process, stateRva))
+                // A handle opened at JOB_OBJECT_MSG_NEW_PROCESS can lack VM rights even
+                // when OpenProcess succeeds. Its granted rights never grow: retrying a
+                // read on that same handle cannot recover. Allow creation to progress and
+                // reopen it. The tracked handle pins the PID and owns our suspend count.
+                Thread.Sleep(1);
+                IntPtr retryProcess = OpenProcess(ProcessAccess, false, processId);
+                if (retryProcess == IntPtr.Zero)
                 {
-                    return true;
+                    failure = $"OpenProcess(retry), win32 error {Marshal.GetLastWin32Error()}";
+                    continue;
                 }
 
-                // ClearIn normally succeeds immediately. Yielding here only covers the brief
-                // interval where Windows has announced the process but has not made all of its
-                // image metadata readable yet.
-                Thread.Yield();
+                try
+                {
+                    if (ElectronFuse.ClearIn(retryProcess, stateRva, out failure))
+                        return true;
+                }
+                finally
+                {
+                    CloseHandle(retryProcess);
+                }
             }
 
             return false;
