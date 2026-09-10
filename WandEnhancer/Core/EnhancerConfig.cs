@@ -161,16 +161,36 @@ namespace WandEnhancer.Core
         private static JsEdit[] LocateAccountReducer(JsCursor js)
         {
             int anchor = js.IndexOf("\"ACTION_SET_ACCOUNT\"");
-            var reducer = anchor < 0 ? null : js.FindFunctionAfter(anchor);
-            if (reducer == null)
+            if (anchor < 0)
             {
                 return null;
+            }
+
+            var reducer = js.FindFunctionAfter(anchor);
+            if (reducer == null)
+            {
+                throw new Exception("ACTION_SET_ACCOUNT reducer could not be located");
+            }
+
+            // An update/backup can already contain our payload. Recognize that exact
+            // expression (allowing formatting whitespace), not arbitrary account wrappers.
+            // Keep a no-op edit so JavaScriptPatchApplier marks this required patch resolved.
+            var tokens = new List<string>();
+            foreach (Match token in Regex.Matches(PatchPayload.Load("pro-account-reducer"),
+                @"\$\{account\}|""[^""]*""|[\w$]+|=>|&&|==|\.\.\.|[^\s]"))
+            {
+                tokens.Add(token.Value == "${account}" ? @"[\w$]+" : Regex.Escape(token.Value));
+            }
+            string existing = @"(?<![\w$])" + string.Join(@"\s*", tokens) + @"(?=\s*[,}])";
+            if (Regex.IsMatch(reducer.Body, existing))
+            {
+                return Edits(reducer.ReplaceInBody(existing, "$0"));
             }
 
             // The payload's ${account} survives PatchPayload untouched and is resolved by the
             // regex replacement below, which is what carries the original identifier through.
             return Edits(reducer.ReplaceInBody(
-                @"account:\s*(?<account>[\w$]+)",
+                @"(?<![\w$])account\s*:\s*(?<account>[\w$]+)(?=\s*[,}])",
                 PatchPayload.Load("pro-account-reducer")));
         }
 
