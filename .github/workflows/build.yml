@@ -1,9 +1,16 @@
 name: Build executable
 
 on:
-  push:
-    branches: [ "master" ]
   workflow_dispatch:
+    inputs:
+      enable_update_notifications:
+        description: Include GitHub release checks when Wand starts
+        type: boolean
+        required: false
+        default: false
+  pull_request:
+  push:
+    branches: [master, 'feature/rc_*']
 
 jobs:
   build:
@@ -31,7 +38,12 @@ jobs:
 
       - name: Build unsigned executable
         shell: pwsh
-        run: ./build.ps1 -Configuration Release
+        run: |
+          if ('${{ inputs.enable_update_notifications }}' -eq 'true') {
+            ./build.ps1 -Configuration Release -EnableUpdateNotifications
+          } else {
+            ./build.ps1 -Configuration Release
+          }
 
       - name: Upload unsigned executable
         uses: actions/upload-artifact@v6
@@ -39,3 +51,9 @@ jobs:
           name: WandEnhancer-unsigned
           path: WandEnhancer/bin/Release/WandEnhancer.exe
           if-no-files-found: error
+
+      # Also verify the optional upstream notification variant. The fork private
+      # updater remains available in both variants.
+      - name: Verify opt-in update notifications build
+        shell: pwsh
+        run: ./build.ps1 -Configuration Release -EnableUpdateNotifications

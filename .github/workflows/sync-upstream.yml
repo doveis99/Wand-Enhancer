@@ -9,15 +9,20 @@ permissions:
   contents: write
   actions: write
 
+concurrency:
+  group: sync-upstream-master
+  cancel-in-progress: false
+
 jobs:
   sync:
     if: github.repository == 'doveis99/Wand-Enhancer'
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: master
 
       - name: Merge upstream changes
         id: sync
@@ -57,6 +62,7 @@ jobs:
                 exit "$merge_status"
               fi
             }
+            pwsh -NoProfile -File ./scripts/validate-fork-automation.ps1
             git push origin HEAD:master
             branch_changed=true
           fi
@@ -64,7 +70,7 @@ jobs:
           echo "branch_changed=$branch_changed" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch build for synced branch
-        if: steps.sync.outputs.branch_changed == 'true'
+        if: steps.sync.outputs.branch_changed == 'true' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run build.yml --ref master

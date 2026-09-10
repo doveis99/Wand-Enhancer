@@ -78,8 +78,8 @@ Assert-Contains $constants 'public const string UpdateOwner = "doveis99";' 'Cons
 Assert-Contains $constants 'public const string UpdateRepoName = "Wand-Enhancer-Releases";' 'Constants.UpdateRepoName must point updater checks at the private release repository.'
 Assert-Contains $project 'System\.Net\.Http' 'WandEnhancer.csproj must reference System.Net.Http for the updater.'
 Assert-Contains $project 'Utils\\Updater\.cs' 'WandEnhancer.csproj must compile the updater.'
-Assert-Contains $project 'View\\Popups\\UpdatePopup\.xaml\.cs' 'WandEnhancer.csproj must compile the update popup code-behind.'
-Assert-Contains $project 'View\\Popups\\UpdatePopup\.xaml' 'WandEnhancer.csproj must include the update popup XAML.'
+Assert-Contains $project 'View\\Popups\\PrivateUpdatePopup\.xaml\.cs' 'WandEnhancer.csproj must compile the update popup code-behind.'
+Assert-Contains $project 'View\\Popups\\PrivateUpdatePopup\.xaml' 'WandEnhancer.csproj must include the update popup XAML.'
 Assert-Contains $mainWindow 'Command="\{Binding UpdateCommand\}"' 'MainWindow.xaml must expose the update command.'
 Assert-Contains $mainWindowVm 'UpdateCommand\s*=\s*new RelayCommand\(OnUpdate\);' 'MainWindowVm must initialize UpdateCommand.'
 Assert-Contains $updater 'releases/latest' 'Updater must query GitHub releases.'
@@ -88,5 +88,26 @@ Assert-Contains $updater 'AuthenticationHeaderValue\("Bearer"' 'Updater must aut
 Assert-Contains $updater 'Constants\.UpdateOwner' 'Updater must query the private release repository owner.'
 Assert-Contains $updater 'Constants\.UpdateRepoName' 'Updater must query the private release repository name.'
 Assert-Contains $updater 'application/octet-stream' 'Updater must download private release assets through the GitHub asset API.'
+
+# Text merges can produce valid-looking files with duplicate YAML/XML entries.
+if ([regex]::Matches($buildWorkflow, '(?m)^  push:').Count -ne 1) {
+    throw 'build.yml must contain exactly one push trigger.'
+}
+Assert-Contains $mainWindow 'IsPrivateUpdateAvailable' 'Private and public update badges must use separate state.'
+Assert-Contains $mainWindowVm 'new PrivateUpdatePopup' 'Private updates must use their own popup.'
+Assert-Contains $syncWorkflow 'pwsh -NoProfile -File ./scripts/validate-fork-automation.ps1' 'Validate merged fork policy before pushing.'
+
+[xml]$projectXml = $project
+foreach ($kind in 'Compile', 'Page', 'Reference') {
+    $items = $projectXml.SelectNodes("//*[local-name()='$kind']/@Include")
+    $duplicates = $items | ForEach-Object { $_.Value } | Group-Object | Where-Object Count -gt 1
+    if ($duplicates) { throw "Duplicate $kind project entries: $($duplicates.Name -join ', ')" }
+}
+[xml]$locale = Read-RepoFile 'WandEnhancer\Locale\lang.en-US.xaml'
+$keys = $locale.DocumentElement.ChildNodes | Where-Object NodeType -eq Element | ForEach-Object {
+    $_.GetAttribute('Key', 'http://schemas.microsoft.com/winfx/2006/xaml')
+}
+$duplicates = $keys | Group-Object | Where-Object Count -gt 1
+if ($duplicates) { throw "Duplicate English resource keys: $($duplicates.Name -join ', ')" }
 
 Write-Host 'Fork automation and updater wiring validated.'

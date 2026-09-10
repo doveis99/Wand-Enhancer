@@ -70,7 +70,7 @@
         <TextBlock Grid.Row="2" Margin="0 12 0 6" Foreground="{DynamicResource Foreground}"
                    FontSize="14" FontWeight="Bold" Text="{DynamicResource up_release_notes}" />
 
-        <Border Grid.Row="3"
+        <Border Grid.Row="3" MinHeight="180"
                 Background="{DynamicResource Muted}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="4">
             <ScrollViewer x:Name="NotesScrollViewer"
                           VerticalScrollBarVisibility="Hidden"
@@ -97,8 +97,8 @@
                     Click="OnShowMoreClick" />
 
             <Button Grid.Column="2" Padding="18 5" Style="{StaticResource UpdateActionButton}"
-                    Content="{DynamicResource up_update_now}"
-                    Click="OnUpdateClick" />
+                    Content="{DynamicResource up_open_release}"
+                    Click="OnOpenReleaseClick" />
         </Grid>
     </Grid>
 </UserControl>
