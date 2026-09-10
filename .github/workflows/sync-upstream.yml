@@ -73,4 +73,4 @@ jobs:
         if: steps.sync.outputs.branch_changed == 'true' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run build.yml --ref master
+        run: gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref master

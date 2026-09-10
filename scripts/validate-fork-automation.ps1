@@ -60,6 +60,7 @@ Assert-Contains $mirrorWorkflow "github\.repository == 'k1tbyte/Wand-Enhancer'" 
 
 Assert-Contains $syncWorkflow 'k1tbyte/Wand-Enhancer\.git' 'sync-upstream.yml must fetch from the original upstream repository.'
 Assert-Contains $syncWorkflow 'gh\s+workflow\s+run\s+build\.yml' 'sync-upstream.yml must dispatch the build workflow after an automated sync.'
+Assert-Contains $syncWorkflow '--repo\s+"\$GITHUB_REPOSITORY"' 'Build dispatch must explicitly target this fork instead of the upstream repository.'
 if ($syncWorkflow -match 'git\s+push\s+origin\s+--tags') {
     throw 'sync-upstream.yml must not push upstream tags with GITHUB_TOKEN because workflow-changing historical tags are rejected.'
 }
