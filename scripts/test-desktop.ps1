@@ -111,6 +111,10 @@ try {
     Assert-Equal ($isPatched.Invoke($null, $installArgument)) $true 'Completed retry'
     [IO.File]::WriteAllText($marker, '')
     [IO.File]::WriteAllText((Join-Path $scratch 'FixtureClient.exe.stub'), 'original launcher')
+    $autoPatchConfig = Join-Path $scratch ($assembly.GetType('WandEnhancer.Constants', $true).GetField('AutoPatchConfigFileName').GetRawConstantValue())
+    foreach ($path in $autoPatchConfig, (Join-Path $scratch 'launcher.log'), (Join-Path $scratch 'launcher.prev.log')) {
+        [IO.File]::WriteAllText($path, 'fixture')
+    }
 
     # Restore can only target this fixture's unique process name and scratch Squirrel root.
     Assert-Equal ([Diagnostics.Process]::GetProcessesByName($config.BrandName).Length) 0 'Fixture process isolation'
@@ -119,7 +123,106 @@ try {
         Assert-Equal (Test-Path $path) $false 'Restore clears patch state'
     }
     Assert-Equal ([IO.File]::ReadAllText((Join-Path $scratch 'FixtureClient.exe'))) 'original launcher' 'Restore launcher'
+    Assert-Equal (Test-Path $autoPatchConfig) $false 'Restore removes auto-patch config'
+    foreach ($log in 'launcher.log', 'launcher.prev.log') {
+        Assert-Equal (Test-Path (Join-Path $scratch $log)) $true "Restore keeps $log"
+    }
     Assert-Equal ($isPatched.Invoke($null, $installArgument)) $false 'Restored installation'
+
+    # A lock while restoring the pristine files must trigger the rollback, not leave a half-emptied tree.
+    [IO.File]::WriteAllText($asar, 'original archive')
+    [IO.File]::WriteAllText($backup, 'original archive')
+    [IO.Directory]::CreateDirectory($unpackedBackup) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $unpackedBackup 'original.txt'), 'original unpacked')
+    [IO.Directory]::CreateDirectory($unpacked) | Out-Null
+    $lockedFile = Join-Path $unpacked 'locked.dll'
+    [IO.File]::WriteAllText($lockedFile, 'in use')
+    $messages = [Collections.Generic.List[string]]::new()
+    $recordingLogger = ({ param($message, $level) $messages.Add($message) }.GetNewClosure()) -as $loggerType
+    $patchConfig = [Activator]::CreateInstance($assembly.GetType('WandEnhancer.Models.PatchConfig', $true))
+    $lockedEnhancer = [Activator]::CreateInstance($enhancerType, @($config, $recordingLogger, $patchConfig))
+    $lock = [IO.File]::Open($lockedFile, 'Open', 'Read', 'None')
+    try {
+        $failed = $false
+        try { $enhancerType.GetMethod('Patch').Invoke($lockedEnhancer, $null) | Out-Null } catch { $failed = $true }
+        Assert-Equal $failed $true 'Locked preparation fails Patch'
+    }
+    finally {
+        $lock.Dispose()
+    }
+    $rolledBack = @($messages | Where-Object { $_ -like '*rollback did not finish*' -or $_ -like '*original Wand files were restored*' })
+    Assert-Equal ($rolledBack.Count -gt 0) $true 'Locked preparation triggers rollback'
+
+    # A service the pristine install had must not silently vanish (antivirus) and still report success.
+    $ensureSurvived = $assembly.GetType('WandEnhancer.Core.Patching.Shared.AuxiliaryCompatibility', $true).GetMethod('EnsureSurvivedPatching')
+    $pristineTree = Join-Path $scratch 'pristine-tree'
+    $liveTree = Join-Path $scratch 'live-tree'
+    foreach ($tree in $pristineTree, $liveTree) {
+        [IO.Directory]::CreateDirectory((Join-Path $tree 'static\unpacked\auxiliary')) | Out-Null
+    }
+    $trees = [object[]]@([string]$pristineTree, [string]$liveTree)
+    $ensureSurvived.Invoke($null, $trees) | Out-Null
+    $pristineService = Join-Path $pristineTree 'static\unpacked\auxiliary\FixtureAuxiliaryService.exe'
+    [IO.File]::WriteAllText($pristineService, 'service')
+    $vanished = $false
+    try { $ensureSurvived.Invoke($null, $trees) | Out-Null } catch { $vanished = $true }
+    Assert-Equal $vanished $true 'Vanished auxiliary service fails Patch'
+    [IO.File]::WriteAllText((Join-Path $liveTree 'static\unpacked\auxiliary\FixtureAuxiliaryService.exe'), 'service')
+    $ensureSurvived.Invoke($null, $trees) | Out-Null
+
+    # Only a Squirrel root (Update.exe present) is swept; the parent of a hand-picked folder may hold other programs.
+    $unrelated = Join-Path $scratch 'unrelated'
+    [IO.Directory]::CreateDirectory($unrelated) | Out-Null
+    $bystander = Join-Path $unrelated 'fixture-bystander.exe'
+    Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\cmd.exe') -Destination $bystander
+    $bystanderProcess = Start-Process -FilePath $bystander -ArgumentList '/c', 'pause' -WindowStyle Hidden -PassThru
+    try {
+        $killInstallProcesses = $enhancerType.GetMethod('KillInstallProcesses', $privateInstance)
+        $killInstallProcesses.Invoke($enhancer, $null) | Out-Null
+        Assert-Equal $bystanderProcess.HasExited $false 'Non-Squirrel parent is not swept'
+        [IO.File]::WriteAllText((Join-Path $scratch 'Update.exe'), '')
+        $killInstallProcesses.Invoke($enhancer, $null) | Out-Null
+        $bystanderProcess.WaitForExit(5000) | Out-Null
+        Assert-Equal $bystanderProcess.HasExited $true 'Squirrel root is swept'
+    }
+    finally {
+        if (-not $bystanderProcess.HasExited) { $bystanderProcess.Kill() }
+    }
+
+    # Squirrel keeps writing while its updater runs, so a stable app.asar must not count as "done" until it exits.
+    $waitForSettled = $assembly.GetType('WandEnhancer.Core.Services.UpdateWatcherService', $true).GetMethod('WaitForSettled', $privateStatic)
+    [IO.File]::WriteAllText($asar, 'stable archive')
+    $updaterPath = Join-Path $scratch 'Update.exe'
+    Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\cmd.exe') -Destination $updaterPath -Force
+    $updater = Start-Process -FilePath $updaterPath -ArgumentList '/c', 'pause' -WindowStyle Hidden -PassThru
+    $stopUpdater = Start-Job -ScriptBlock { param($id) Start-Sleep -Seconds 5; Stop-Process -Id $id -Force } -ArgumentList $updater.Id
+    try {
+        $clock = [Diagnostics.Stopwatch]::StartNew()
+        $settled = $waitForSettled.Invoke($null, [object[]]@([string]$install, [string]$scratch))
+        $clock.Stop()
+        Assert-Equal $settled $true 'Watcher settles once the updater exits'
+        Assert-Equal ($clock.Elapsed.TotalSeconds -gt 10) $true 'Watcher waits for a running updater'
+    }
+    finally {
+        if (-not $updater.HasExited) { $updater.Kill() }
+        Remove-Job -Job $stopUpdater -Force
+    }
+
+    # A picked or dropped folder may be the version folder or the Squirrel root that holds it.
+    $resolveInstall = $assembly.GetType('WandEnhancer.Utils.WeModInstalls', $true).GetMethod('ResolveInstall')
+    $squirrelRoot = Join-Path $scratch 'drop-root'
+    $versionFolder = Join-Path $squirrelRoot 'app-2.0.0'
+    [IO.Directory]::CreateDirectory((Join-Path $versionFolder 'resources')) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $versionFolder 'Wand.exe'), '')
+    [IO.File]::WriteAllText((Join-Path $versionFolder 'resources\app.asar'), '')
+    foreach ($candidate in $versionFolder, $squirrelRoot) {
+        $resolved = $resolveInstall.Invoke($null, [object[]]@([string]$candidate))
+        Assert-Equal ($null -ne $resolved) $true "Resolves $candidate"
+        Assert-Equal $resolved.RootDirectory $versionFolder "Resolved root for $candidate"
+    }
+    foreach ($candidate in $unrelated, (Join-Path $scratch 'missing-folder')) {
+        Assert-Equal ($null -eq $resolveInstall.Invoke($null, [object[]]@([string]$candidate))) $true "Rejects $candidate"
+    }
     Write-Host 'Desktop regression checks passed (native sizes, backups, rollback, retry state, restore).'
 }
 finally {

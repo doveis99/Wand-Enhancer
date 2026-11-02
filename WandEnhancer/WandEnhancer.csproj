@@ -244,7 +244,7 @@
         </ItemGroup>
 
         <PropertyGroup>
-            <DllList>@(AssemblyList->'%(FullPath)', ' ')</DllList>
+            <DllList>@(AssemblyList->'&quot;%(FullPath)&quot;', ' ')</DllList>
         </PropertyGroup>
 
         <Delete Files="$(OutputPath)$(AssemblyName).pdb" ContinueOnError="true" />

@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using WandEnhancer.Core;
+using WandEnhancer.Core.Patching.Shared;
 using WandEnhancer.Core.Services;
 using WandEnhancer.Models;
 using WandEnhancer.ReactiveUICore;
@@ -103,24 +104,53 @@ namespace WandEnhancer.View.MainWindow
         public RelayCommand CopyLogsCommand { get; }
         public RelayCommand ExportLogsCommand { get; }
 
-        private void OnFolderPathSelection(object obj)
+        private async void OnFolderPathSelection(object obj)
         {
             string selectedPath = _dialogs.PickFolder(
                 LocalizationManager.Get("dialog_pick_install"),
                 Environment.GetEnvironmentVariable("LOCALAPPDATA"));
-            if (selectedPath == null)
+            if (selectedPath != null)
+            {
+                await UseInstallPathAsync(selectedPath);
+            }
+        }
+
+        private bool _isResolvingInstall;
+
+        /// <summary>
+        /// Picks the install from a folder or from the Wand executable inside one. Ignored while a run or
+        /// another pick is active: the install must not change under them.
+        /// </summary>
+        public async Task UseInstallPathAsync(string path)
+        {
+            if (IsBusy || _isResolvingInstall)
             {
                 return;
             }
 
-            var info = WeModInstalls.CheckWeModPath(selectedPath);
-            if (info == null)
+            _isResolvingInstall = true;
+            try
             {
-                Log(LocalizationManager.Format("log_invalid_directory", Path.GetFileName(selectedPath)), ELogType.Error);
-                return;
-            }
+                // Off the UI thread: a network share or a large folder must not freeze the window, or Explorer waiting on the drop.
+                var info = await Task.Run(() =>
+                    WeModInstalls.ResolveInstall(File.Exists(path) ? Path.GetDirectoryName(path) : path));
+                if (IsBusy)
+                {
+                    return;
+                }
 
-            UseInstall(info);
+                if (info == null)
+                {
+                    Log(LocalizationManager.Format("log_invalid_directory", Path.GetFileName(path)), ELogType.Error);
+                    return;
+                }
+
+                UseInstall(info);
+            }
+            finally
+            {
+                _isResolvingInstall = false;
+            }
         }
 
         // Runs off the UI thread due to heavy file IO.
@@ -137,12 +167,14 @@ namespace WandEnhancer.View.MainWindow
             {
                 try
                 {
-                    new Enhancer(WeModInfo, Log).Restore();
+                    OpenOperationLog("Restore");
+                    new Enhancer(WeModInfo, LogAndRecord).Restore();
                     return true;
                 }
                 catch (Exception e)
                 {
-                    Log(LocalizationManager.Format("log_restore_failed", e.Message), ELogType.Error);
+                    LogAndRecord(LocalizationManager.Format("log_restore_failed", e.Message), ELogType.Error);
+                    LauncherLog.Write(e.ToString(), ELogType.Error);
                     return false;
                 }
             });
@@ -173,13 +205,16 @@ namespace WandEnhancer.View.MainWindow
                 {
                     try
                     {
-                        new Enhancer(WeModInfo, Log, config).Patch();
+                        OpenOperationLog($"Patch | patches {Program.DescribePatches(config)} | strategy {config.Strategy} | " +
+                                         $"auto-apply {config.AutoApplyAfterUpdate}");
+                        new Enhancer(WeModInfo, LogAndRecord, config).Patch();
                         AlreadyPatched = true;
                         CanRestore = true;
                     }
                     catch (Exception e)
                     {
-                        Log(LocalizationManager.Format("log_patch_failed", e.Message), ELogType.Error);
+                        LogAndRecord(LocalizationManager.Format("log_patch_failed", e.Message), ELogType.Error);
+                        LauncherLog.Write(e.ToString(), ELogType.Error);
                         IsPatchEnabled = true;
                     }
                 });
@@ -215,6 +250,19 @@ namespace WandEnhancer.View.MainWindow
                     Log("WandEnhancer updated successfully. Restarting...", ELogType.Success);
                 });
             }, () => _updater.GetFullChangelogAsync()), Application.Current.FindResource("private_up_popup_title") as string);
+        }
+
+        /// <summary>Starts a launcher.log section: a failed manual run must leave a file to attach to a bug report.</summary>
+        private void OpenOperationLog(string operation)
+        {
+            LauncherLog.Open(LauncherDeployment.SquirrelRootOf(WeModInfo),
+                $"WandEnhancer {Constants.Version} build {Constants.Build} | {operation} | {WeModInfo.ExecutablePath}");
+        }
+
+        private void LogAndRecord(string message, ELogType logType)
+        {
+            Log(message, logType);
+            LauncherLog.Write(message, logType);
         }
 
         private void Log(string message, ELogType logType)
