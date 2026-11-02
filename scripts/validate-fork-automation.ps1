@@ -111,4 +111,9 @@ $keys = $locale.DocumentElement.ChildNodes | Where-Object NodeType -eq Element |
 $duplicates = $keys | Group-Object | Where-Object Count -gt 1
 if ($duplicates) { throw "Duplicate English resource keys: $($duplicates.Name -join ', ')" }
 
+# A misspelled key only surfaces at runtime, when the update button is pressed.
+$privateUpdateUi = $mainWindowVm + (Read-RepoFile 'WandEnhancer\View\Popups\PrivateUpdatePopup.xaml') + (Read-RepoFile 'WandEnhancer\View\Popups\PrivateUpdatePopup.xaml.cs')
+$missingKeys = [regex]::Matches($privateUpdateUi, '\bprivate_up_\w+') | ForEach-Object Value | Sort-Object -Unique | Where-Object { $_ -notin $keys }
+if ($missingKeys) { throw "Private updater resource keys missing from lang.en-US.xaml: $($missingKeys -join ', ')" }
+
 Write-Host 'Fork automation and updater wiring validated.'

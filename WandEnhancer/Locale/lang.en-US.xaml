@@ -87,7 +87,7 @@
     <s:String x:Key="private_up_loading_changelog">Loading changelog...</s:String>
     <s:String x:Key="private_up_changelog_failed">Failed to load the full changelog. The latest notes are shown instead.</s:String>
     <s:String x:Key="private_up_update_now">Update now</s:String>
-    <s:String x:Key="private_up_popprivate_up_title">Update available!</s:String>
+    <s:String x:Key="private_up_popup_title">Update available!</s:String>
     <!--#endregion -->
 
 </ResourceDictionary>

@@ -249,7 +249,7 @@ namespace WandEnhancer.View.MainWindow
 
                     Log("WandEnhancer updated successfully. Restarting...", ELogType.Success);
                 });
-            }, () => _updater.GetFullChangelogAsync()), Application.Current.FindResource("private_up_popup_title") as string);
+            }, () => _updater.GetFullChangelogAsync()), LocalizationManager.Get("private_up_popup_title"));
         }
 
         /// <summary>Starts a launcher.log section: a failed manual run must leave a file to attach to a bug report.</summary>
